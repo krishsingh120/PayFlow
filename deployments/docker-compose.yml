@@ -1,0 +1,126 @@
+services:
+  # ─── PostgreSQL 16 ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: payflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-payflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-payflow}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-payflow} -d ${POSTGRES_DB:-payflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── RabbitMQ 3 with Management UI ────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: payflow-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-payflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-changeme}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ─── Payment Service (Go HTTP API) ────────────────────────────────────────
+  payment-api:
+    build:
+      context: ../services/payment
+      dockerfile: Dockerfile
+      target: api
+    container_name: payflow-payment-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-payflow}?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-payflow}:${RABBITMQ_PASSWORD:-changeme}@rabbitmq:5672/
+      PAYMENT_SERVICE_PORT: ${PAYMENT_SERVICE_PORT:-8080}
+      PAYMENT_SERVICE_ENV: ${PAYMENT_SERVICE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-super-secret-webhook-key-change-me}
+      PROVIDER_DEFAULT_OUTCOME: ${PROVIDER_DEFAULT_OUTCOME:-success}
+      PROVIDER_TIMEOUT_MS: ${PROVIDER_TIMEOUT_MS:-3000}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─── Payment Worker (Go background processor) ──────────────────────────────
+  payment-worker:
+    build:
+      context: ../services/payment
+      dockerfile: Dockerfile
+      target: worker
+    container_name: payflow-payment-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-payflow}?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-payflow}:${RABBITMQ_PASSWORD:-changeme}@rabbitmq:5672/
+      PAYMENT_SERVICE_ENV: ${PAYMENT_SERVICE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-super-secret-webhook-key-change-me}
+      PROVIDER_DEFAULT_OUTCOME: ${PROVIDER_DEFAULT_OUTCOME:-success}
+      PROVIDER_TIMEOUT_MS: ${PROVIDER_TIMEOUT_MS:-3000}
+
+  # ─── API Gateway (Node.js) ────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ../services/api-gateway
+      dockerfile: Dockerfile
+    container_name: payflow-api-gateway
+    restart: unless-stopped
+    depends_on:
+      payment-api:
+        condition: service_healthy
+    environment:
+      GATEWAY_PORT: ${GATEWAY_PORT:-3000}
+      PAYMENT_SERVICE_URL: http://payment-api:8080
+      NODE_ENV: ${PAYMENT_SERVICE_ENV:-development}
+    ports:
+      - "3000:3000"
+
+  # ─── React Frontend (Vite dev server) ─────────────────────────────────────
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+    container_name: payflow-web
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+    environment:
+      VITE_API_BASE_URL: http://localhost:3000
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
