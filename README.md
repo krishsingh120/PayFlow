@@ -8,6 +8,10 @@
 
 ## Architecture Overview
 
+### High-Level Design (HLD)
+
+![PayFlow HLD Diagram](https://github.com/krishsingh120/ExecHub-HLD-Image/blob/main/PayFlow-HLD-Diagram.png?raw=true)
+
 ```
   Browser (React + Vite)
         |
