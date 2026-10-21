@@ -7,7 +7,7 @@
 | 0 | Repository inspection, architecture, plan | ✅ Done | — |
 | 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | `891b455` |
 | 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | `2316fc7` |
-| 3 | API Gateway, React frontend | ⏳ Pending | — |
+| 3 | API Gateway, React frontend | ✅ Done | pending push |
 | 4 | RabbitMQ, Go worker, simulated provider | ⏳ Pending | — |
 | 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ Pending | — |
 | 6 | Double-entry ledger, reconciliation | ⏳ Pending | — |
@@ -110,3 +110,33 @@
 - `go test ./...` — 100% passed across all packages (`internal/http`, `internal/payments`, `internal/storage`) ✅
 - `go build ./cmd/api; go build ./cmd/worker` — binaries build cleanly with zero warnings ✅
 - `npm run build` in `services/api-gateway` — compiles cleanly ✅
+
+---
+
+## Phase 3 — React Frontend & Idempotency Lab
+
+**Date:** 2026-10-21  
+**Status:** ✅ Complete
+
+### Files Created & Modified
+
+| File | Purpose |
+|---|---|
+| `apps/web/package.json` | React 19 + TypeScript + Vite + Lucide icons |
+| `apps/web/vite.config.ts` | Vite dev server + proxy configuration to API Gateway (`:3000`) |
+| `apps/web/index.html` | Google Fonts (Outfit, JetBrains Mono), SEO tags, SVG icon |
+| `apps/web/src/index.css` | Vanilla CSS design system: curated dark theme, emerald accents, glassmorphic panels |
+| `apps/web/src/lib/api.ts` | Type-safe frontend client for payments, listing, and health checks |
+| `apps/web/src/components/Header.tsx` | Brand header with live gateway/engine ping indicators and action triggers |
+| `apps/web/src/components/MetricsGrid.tsx` | Stats cards for volume (₹), transaction counts, and success rates |
+| `apps/web/src/components/TransactionList.tsx` | Live feed with status filtering, search, auto-polling (3s), inspect drawer |
+| `apps/web/src/components/CreatePaymentModal.tsx` | Payment creation form with live paise conversion and UUID generator |
+| `apps/web/src/components/IdempotencyTesterModal.tsx` | Interactive Pine Labs interview lab testing 201 Created, 200 Replay, and 409 Conflict |
+| `apps/web/src/components/PaymentDetailsModal.tsx` | Deep transaction inspector with ULID breakdown and copyable raw JSON |
+| `apps/web/src/App.tsx` | Main application assembly and state coordination |
+| `apps/web/Dockerfile` | Container configuration for web preview |
+
+### Verification
+- `npm run build` in `apps/web` — built cleanly in 423ms (`dist/` generated with zero type errors) ✅
+- `npm run build` in `services/api-gateway` — compiles cleanly ✅
+- `go test ./...` in `services/payment` — 100% test pass rate across all packages ✅
