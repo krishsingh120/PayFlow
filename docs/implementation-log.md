@@ -9,7 +9,7 @@
 | 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | `2316fc7` |
 | 3 | API Gateway, React frontend | ✅ Done | `1698021` |
 | 4 | RabbitMQ, Go worker, simulated provider | ✅ Done | `efcfde0` |
-| 5 | Idempotency hardening, refunds, webhooks, Outbox | ✅ Done | pending push |
+| 5 | Idempotency hardening, refunds, webhooks, Outbox | ✅ Done | `16b1f1b` |
 | 6 | Double-entry ledger, reconciliation | ⏳ Pending | — |
 | 7 | E2E, CI, security review, final cleanup | ⏳ Pending | — |
 
