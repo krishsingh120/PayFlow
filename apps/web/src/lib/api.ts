@@ -178,3 +178,88 @@ export function formatINR(paise: number): string {
     maximumFractionDigits: 2,
   }).format(rupees);
 }
+
+export interface Refund {
+  id: string;
+  payment_id: string;
+  amount: number;
+  status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
+  reason?: string;
+  idempotency_key?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createRefund(
+  paymentId: string,
+  payload: { amount: number; reason?: string },
+  idempotencyKey?: string
+): Promise<ApiResponse<Refund>> {
+  const start = performance.now();
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
+    const res = await fetch(`${API_BASE}/v1/payments/${paymentId}/refunds`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const latencyMs = Math.round(performance.now() - start);
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        status: res.status,
+        error: json.error || 'Error',
+        message: json.message || 'Refund failed',
+        latencyMs,
+      };
+    }
+    return {
+      status: res.status,
+      isReplay: res.headers.get('Idempotent-Replay') === 'true' || res.status === 200,
+      data: json as Refund,
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      status: 0,
+      error: 'NetworkError',
+      message: err.message,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  }
+}
+
+export async function listRefunds(paymentId: string): Promise<ApiResponse<Refund[]>> {
+  const start = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/v1/payments/${paymentId}/refunds`);
+    const latencyMs = Math.round(performance.now() - start);
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        status: res.status,
+        error: json.error,
+        message: json.message,
+        latencyMs,
+      };
+    }
+    return {
+      status: res.status,
+      data: json as Refund[],
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      status: 0,
+      error: 'NetworkError',
+      message: err.message,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  }
+}
+

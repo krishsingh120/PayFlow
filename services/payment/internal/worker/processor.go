@@ -11,16 +11,21 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
+	"github.com/krishsingh120/payflow/services/payment/internal/outbox"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
 	"github.com/krishsingh120/payflow/services/payment/internal/provider"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
+	"github.com/krishsingh120/payflow/services/payment/internal/webhooks"
 )
 
 // PaymentProcessor handles the execution lifecycle of payment processing jobs.
 type PaymentProcessor struct {
-	repo     storage.PaymentRepository
-	provider provider.Provider
-	logger   zerolog.Logger
+	repo        storage.PaymentRepository
+	provider    provider.Provider
+	logger      zerolog.Logger
+	outboxRepo  outbox.Repository
+	webhookRepo webhooks.Repository
+	webhookURL  string
 }
 
 // NewPaymentProcessor creates a new processor with the supplied dependencies.
@@ -34,6 +39,19 @@ func NewPaymentProcessor(
 		provider: provider,
 		logger:   logger,
 	}
+}
+
+// WithOutbox attaches an Outbox repository for event persistence.
+func (p *PaymentProcessor) WithOutbox(repo outbox.Repository) *PaymentProcessor {
+	p.outboxRepo = repo
+	return p
+}
+
+// WithWebhooks attaches a Webhook repository and destination URL.
+func (p *PaymentProcessor) WithWebhooks(repo webhooks.Repository, webhookURL string) *PaymentProcessor {
+	p.webhookRepo = repo
+	p.webhookURL = webhookURL
+	return p
 }
 
 // ProcessJob decodes a PaymentJob message and advances the payment state machine
@@ -122,6 +140,8 @@ func (p *PaymentProcessor) ProcessJob(ctx context.Context, payload []byte) error
 			Dur("duration", time.Since(start)).
 			Msg("payment successfully processed")
 
+		p.emitOutcomeEvents(ctx, payment.ID, "payment.succeeded", payment.Amount, payment.Currency, &result.ProviderRef, nil)
+
 	case provider.OutcomeDecline:
 		_, err = p.repo.UpdateStatus(
 			ctx,
@@ -140,6 +160,8 @@ func (p *PaymentProcessor) ProcessJob(ctx context.Context, payload []byte) error
 			Str("reason", *result.FailureReason).
 			Msg("payment declined by provider")
 
+		p.emitOutcomeEvents(ctx, payment.ID, "payment.failed", payment.Amount, payment.Currency, &result.ProviderRef, result.FailureReason)
+
 	case provider.OutcomeTimeout:
 		_, err = p.repo.UpdateStatus(
 			ctx,
@@ -156,7 +178,51 @@ func (p *PaymentProcessor) ProcessJob(ctx context.Context, payload []byte) error
 		p.logger.Warn().
 			Str("payment_id", payment.ID).
 			Msg("payment timed out at provider — marked as UNKNOWN for reconciliation")
+
+		p.emitOutcomeEvents(ctx, payment.ID, "payment.timeout", payment.Amount, payment.Currency, &result.ProviderRef, result.FailureReason)
 	}
 
 	return nil
+}
+
+func (p *PaymentProcessor) emitOutcomeEvents(
+	ctx context.Context,
+	paymentID, eventType string,
+	amount int64,
+	currency string,
+	providerRef, failureReason *string,
+) {
+	data := map[string]any{
+		"event":          eventType,
+		"payment_id":     paymentID,
+		"amount":         amount,
+		"currency":       currency,
+		"provider_ref":   providerRef,
+		"failure_reason": failureReason,
+		"timestamp":      time.Now().UTC(),
+	}
+	payload, _ := json.Marshal(data)
+
+	if p.outboxRepo != nil {
+		if _, err := p.outboxRepo.Store(ctx, paymentID, eventType, payload); err != nil {
+			p.logger.Error().Err(err).Str("payment_id", paymentID).Msg("failed to store outbox event")
+		}
+	}
+
+	if p.webhookRepo != nil && p.webhookURL != "" {
+		delivery := &webhooks.Delivery{
+			ID:        webhooks.NewDeliveryID(),
+			PaymentID: paymentID,
+			EventType: eventType,
+			URL:       p.webhookURL,
+			Payload:   payload,
+			Status:    webhooks.StatusPending,
+			Attempts:  0,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		if err := p.webhookRepo.CreateDelivery(ctx, delivery); err != nil {
+			p.logger.Error().Err(err).Str("payment_id", paymentID).Msg("failed to enqueue webhook delivery")
+		}
+	}
 }

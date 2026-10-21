@@ -42,7 +42,7 @@ func main() {
 		Msg("starting payment-api")
 
 	// ── Database & Storage ──────────────────────────────────────────────────
-	var repo storage.PaymentRepository
+	var repo storage.Repository
 	var pool *pgxpool.Pool
 
 	if cfg.DatabaseURL != "" {

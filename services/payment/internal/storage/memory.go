@@ -13,18 +13,22 @@ import (
 // MemoryPaymentRepository is an in-memory, thread-safe implementation of PaymentRepository.
 // It is ideal for unit tests, contract tests, and offline local development.
 type MemoryPaymentRepository struct {
-	mu      sync.RWMutex
-	byID    map[string]*payments.Payment
-	byKey   map[string]string // idempotency_key -> id
-	ordered []*payments.Payment
+	mu               sync.RWMutex
+	byID             map[string]*payments.Payment
+	byKey            map[string]string // idempotency_key -> id
+	ordered          []*payments.Payment
+	refundsByID      map[string]*payments.Refund
+	refundsByPayment map[string][]*payments.Refund
 }
 
 // NewMemoryPaymentRepository constructs an empty in-memory repository.
 func NewMemoryPaymentRepository() *MemoryPaymentRepository {
 	return &MemoryPaymentRepository{
-		byID:    make(map[string]*payments.Payment),
-		byKey:   make(map[string]string),
-		ordered: make([]*payments.Payment, 0),
+		byID:             make(map[string]*payments.Payment),
+		byKey:            make(map[string]string),
+		ordered:          make([]*payments.Payment, 0),
+		refundsByID:      make(map[string]*payments.Refund),
+		refundsByPayment: make(map[string][]*payments.Refund),
 	}
 }
 
@@ -158,6 +162,79 @@ func (m *MemoryPaymentRepository) List(_ context.Context, filter payments.ListFi
 	return result, nextCursor, total, nil
 }
 
+// CreateRefund stores a refund verifying payment existence, SUCCEEDED status, and available amount.
+func (m *MemoryPaymentRepository) CreateRefund(_ context.Context, r *payments.Refund) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, exists := m.byID[r.PaymentID]
+	if !exists {
+		return ErrNotFound
+	}
+
+	if p.Status != payments.StatusSucceeded {
+		return payments.ErrRefundInvalidPaymentStatus
+	}
+
+	var totalRefunded int64
+	for _, ref := range m.refundsByPayment[r.PaymentID] {
+		if ref.Status != payments.StatusRefundFailed {
+			totalRefunded += ref.Amount
+		}
+	}
+
+	if totalRefunded+r.Amount > p.Amount {
+		return payments.ErrRefundAmountExceeded
+	}
+
+	clone := &payments.Refund{
+		ID:             r.ID,
+		PaymentID:      r.PaymentID,
+		Amount:         r.Amount,
+		Status:         r.Status,
+		Reason:         r.Reason,
+		IdempotencyKey: r.IdempotencyKey,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+
+	m.refundsByID[clone.ID] = clone
+	m.refundsByPayment[clone.PaymentID] = append(m.refundsByPayment[clone.PaymentID], clone)
+
+	return nil
+}
+
+// GetRefundByID retrieves a refund by its ID.
+func (m *MemoryPaymentRepository) GetRefundByID(_ context.Context, id string) (*payments.Refund, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	r, exists := m.refundsByID[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	clone := *r
+	return &clone, nil
+}
+
+// ListRefundsByPaymentID retrieves all refunds for a specific payment.
+func (m *MemoryPaymentRepository) ListRefundsByPaymentID(_ context.Context, paymentID string) ([]*payments.Refund, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	list, exists := m.refundsByPayment[paymentID]
+	if !exists {
+		return []*payments.Refund{}, nil
+	}
+
+	res := make([]*payments.Refund, len(list))
+	for i, r := range list {
+		clone := *r
+		res[i] = &clone
+	}
+	return res, nil
+}
+
 // Helper to deep copy a Payment struct to protect internal state.
 func clonePayment(src *payments.Payment) *payments.Payment {
 	dst := *src
@@ -170,3 +247,4 @@ func clonePayment(src *payments.Payment) *payments.Payment {
 	}
 	return &dst
 }
+

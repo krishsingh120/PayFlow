@@ -40,3 +40,21 @@ type PaymentRepository interface {
 	// List queries payments matching filter criteria with cursor pagination and total count.
 	List(ctx context.Context, filter payments.ListFilter) ([]*payments.Payment, string, int64, error)
 }
+
+// RefundRepository defines database operations for refund management and over-refund prevention.
+type RefundRepository interface {
+	// CreateRefund stores a new refund with over-refund validation and status checks.
+	CreateRefund(ctx context.Context, r *payments.Refund) error
+
+	// GetRefundByID retrieves a refund by its ULID identifier.
+	GetRefundByID(ctx context.Context, id string) (*payments.Refund, error)
+
+	// ListRefundsByPaymentID retrieves all refunds for a specific payment.
+	ListRefundsByPaymentID(ctx context.Context, paymentID string) ([]*payments.Refund, error)
+}
+
+// Repository combines PaymentRepository and RefundRepository contracts.
+type Repository interface {
+	PaymentRepository
+	RefundRepository
+}

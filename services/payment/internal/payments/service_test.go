@@ -185,3 +185,90 @@ func TestListPayments(t *testing.T) {
 		assert.Equal(t, int64(5), res.Total)
 	})
 }
+
+func TestRefunds(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := setupTestService()
+
+	// 1. Create and transition payment to SUCCEEDED
+	p, _, err := svc.CreatePayment(ctx, "idemp-refund-base", payments.CreatePaymentRequest{
+		Amount:   100000, // 1000 INR
+		Currency: "INR",
+	})
+	require.NoError(t, err)
+
+	_, err = svc.TransitionStatus(ctx, p.ID, payments.StatusPending, nil, nil)
+	require.NoError(t, err)
+	ref := "prov_123"
+	_, err = svc.TransitionStatus(ctx, p.ID, payments.StatusSucceeded, &ref, nil)
+	require.NoError(t, err)
+
+	t.Run("creates partial refund successfully", func(t *testing.T) {
+		res, isReplay, err := svc.CreateRefund(ctx, p.ID, "idemp-ref-1", payments.CreateRefundRequest{
+			Amount: 60000, // 600 INR
+			Reason: "Customer requested partial return",
+		})
+		require.NoError(t, err)
+		assert.False(t, isReplay)
+		assert.NotEmpty(t, res.ID)
+		assert.True(t, strings.HasPrefix(res.ID, "ref_"))
+		assert.Equal(t, int64(60000), res.Amount)
+		assert.Equal(t, payments.StatusRefundSucceeded, res.Status)
+	})
+
+	t.Run("idempotent refund replay", func(t *testing.T) {
+		res, isReplay, err := svc.CreateRefund(ctx, p.ID, "idemp-ref-1", payments.CreateRefundRequest{
+			Amount: 60000,
+			Reason: "Customer requested partial return",
+		})
+		require.NoError(t, err)
+		assert.True(t, isReplay)
+		assert.Equal(t, int64(60000), res.Amount)
+	})
+
+	t.Run("idempotent refund conflict with mismatched amount", func(t *testing.T) {
+		_, _, err := svc.CreateRefund(ctx, p.ID, "idemp-ref-1", payments.CreateRefundRequest{
+			Amount: 30000,
+			Reason: "Different amount",
+		})
+		assert.ErrorIs(t, err, payments.ErrIdempotencyConflict)
+	})
+
+	t.Run("second partial refund reaching exact total", func(t *testing.T) {
+		res, isReplay, err := svc.CreateRefund(ctx, p.ID, "idemp-ref-2", payments.CreateRefundRequest{
+			Amount: 40000, // Remaining 400 INR
+			Reason: "Remaining balance return",
+		})
+		require.NoError(t, err)
+		assert.False(t, isReplay)
+		assert.Equal(t, int64(40000), res.Amount)
+	})
+
+	t.Run("over-refund fails when total exceeded", func(t *testing.T) {
+		_, _, err := svc.CreateRefund(ctx, p.ID, "idemp-ref-3", payments.CreateRefundRequest{
+			Amount: 1, // 1 paise over limit
+			Reason: "Extra refund",
+		})
+		assert.ErrorIs(t, err, payments.ErrRefundAmountExceeded)
+	})
+
+	t.Run("list refunds for payment", func(t *testing.T) {
+		refunds, err := svc.ListRefunds(ctx, p.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(refunds))
+	})
+
+	t.Run("refund non-succeeded payment fails", func(t *testing.T) {
+		pendingPayment, _, err := svc.CreatePayment(ctx, "idemp-pending-refund", payments.CreatePaymentRequest{
+			Amount:   50000,
+			Currency: "INR",
+		})
+		require.NoError(t, err)
+
+		_, _, err = svc.CreateRefund(ctx, pendingPayment.ID, "idemp-ref-invalid", payments.CreateRefundRequest{
+			Amount: 10000,
+		})
+		assert.ErrorIs(t, err, payments.ErrRefundInvalidPaymentStatus)
+	})
+}
+

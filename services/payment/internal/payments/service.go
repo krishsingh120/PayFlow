@@ -30,6 +30,10 @@ type Repository interface {
 	GetByIdempotencyKey(ctx context.Context, key string) (*Payment, error)
 	UpdateStatus(ctx context.Context, id string, expectedOld PaymentStatus, newStatus PaymentStatus, providerRef, failureReason *string) (*Payment, error)
 	List(ctx context.Context, filter ListFilter) ([]*Payment, string, int64, error)
+	// Refunds
+	CreateRefund(ctx context.Context, r *Refund) error
+	GetRefundByID(ctx context.Context, id string) (*Refund, error)
+	ListRefundsByPaymentID(ctx context.Context, paymentID string) ([]*Refund, error)
 }
 
 // Service defines the business use-cases for payment processing.
@@ -38,6 +42,10 @@ type Service interface {
 	GetPayment(ctx context.Context, id string) (*PaymentResponse, error)
 	ListPayments(ctx context.Context, filter ListFilter) (*ListPaymentsResponse, error)
 	TransitionStatus(ctx context.Context, id string, newStatus PaymentStatus, providerRef, failureReason *string) (*PaymentResponse, error)
+	// Refunds
+	CreateRefund(ctx context.Context, paymentID string, idempotencyKey string, req CreateRefundRequest) (*RefundResponse, bool, error)
+	GetRefund(ctx context.Context, id string) (*RefundResponse, error)
+	ListRefunds(ctx context.Context, paymentID string) ([]*RefundResponse, error)
 }
 
 // EventPublisher defines the contract for emitting payment lifecycle events to message brokers.
@@ -196,9 +204,116 @@ func (s *PaymentService) TransitionStatus(
 	return updated.ToResponse(), nil
 }
 
+// CreateRefund handles refund requests with strict over-refund validation and idempotency.
+func (s *PaymentService) CreateRefund(ctx context.Context, paymentID string, idempotencyKey string, req CreateRefundRequest) (*RefundResponse, bool, error) {
+	if strings.TrimSpace(paymentID) == "" {
+		return nil, false, errors.New("payment id is required")
+	}
+	if err := req.Validate(); err != nil {
+		return nil, false, err
+	}
+
+	// 1. Verify payment exists and is SUCCEEDED
+	payment, err := s.repo.GetByID(ctx, paymentID)
+	if err != nil {
+		return nil, false, ErrPaymentNotFound
+	}
+	if payment.Status != StatusSucceeded {
+		return nil, false, ErrRefundInvalidPaymentStatus
+	}
+
+	// 2. Check for idempotent replay
+	key := strings.TrimSpace(idempotencyKey)
+	if key != "" {
+		existingRefunds, err := s.repo.ListRefundsByPaymentID(ctx, paymentID)
+		if err == nil {
+			for _, ref := range existingRefunds {
+				if ref.IdempotencyKey == key {
+					if ref.Amount == req.Amount && ref.Reason == req.Reason {
+						return ref.ToResponse(), true, nil
+					}
+					return nil, false, ErrIdempotencyConflict
+				}
+			}
+		}
+	}
+
+	// 3. Construct and persist refund
+	now := time.Now().UTC()
+	refund := &Refund{
+		ID:             NewRefundID(),
+		PaymentID:      paymentID,
+		Amount:         req.Amount,
+		Status:         StatusRefundSucceeded,
+		Reason:         req.Reason,
+		IdempotencyKey: key,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if err := s.repo.CreateRefund(ctx, refund); err != nil {
+		return nil, false, err
+	}
+
+	// 4. Emit payment.refunded event
+	if s.publisher != nil {
+		eventPayload, _ := json.Marshal(map[string]any{
+			"refund_id":  refund.ID,
+			"payment_id": refund.PaymentID,
+			"amount":     refund.Amount,
+			"status":     string(refund.Status),
+			"reason":     refund.Reason,
+			"created_at": refund.CreatedAt,
+		})
+		_ = s.publisher.Publish(ctx, "payment.refunded", eventPayload)
+	}
+
+	return refund.ToResponse(), false, nil
+}
+
+// GetRefund retrieves a refund by ID.
+func (s *PaymentService) GetRefund(ctx context.Context, id string) (*RefundResponse, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("refund id is required")
+	}
+	ref, err := s.repo.GetRefundByID(ctx, id)
+	if err != nil {
+		return nil, ErrRefundNotFound
+	}
+	return ref.ToResponse(), nil
+}
+
+// ListRefunds lists all refunds for a payment.
+func (s *PaymentService) ListRefunds(ctx context.Context, paymentID string) ([]*RefundResponse, error) {
+	if strings.TrimSpace(paymentID) == "" {
+		return nil, errors.New("payment id is required")
+	}
+	refunds, err := s.repo.ListRefundsByPaymentID(ctx, paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list refunds: %w", err)
+	}
+	data := make([]*RefundResponse, len(refunds))
+	for i, r := range refunds {
+		data[i] = r.ToResponse()
+	}
+	return data, nil
+}
+
 // isPayloadEquivalent checks whether the existing payment matches the request attributes.
+// Hardened to check amount, currency, description, and metadata equality.
 func isPayloadEquivalent(p *Payment, req *CreatePaymentRequest) bool {
-	return p.Amount == req.Amount &&
-		p.Currency == req.Currency &&
-		p.Description == req.Description
+	if p.Amount != req.Amount || p.Currency != req.Currency || p.Description != req.Description {
+		return false
+	}
+	if len(p.Metadata) != len(req.Metadata) {
+		return false
+	}
+	if len(p.Metadata) > 0 {
+		pMeta, err1 := json.Marshal(p.Metadata)
+		reqMeta, err2 := json.Marshal(req.Metadata)
+		if err1 != nil || err2 != nil || string(pMeta) != string(reqMeta) {
+			return false
+		}
+	}
+	return true
 }

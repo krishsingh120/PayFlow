@@ -8,8 +8,8 @@
 | 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | `891b455` |
 | 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | `2316fc7` |
 | 3 | API Gateway, React frontend | ✅ Done | `1698021` |
-| 4 | RabbitMQ, Go worker, simulated provider | ✅ Done | pending push |
-| 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ Pending | — |
+| 4 | RabbitMQ, Go worker, simulated provider | ✅ Done | `efcfde0` |
+| 5 | Idempotency hardening, refunds, webhooks, Outbox | ✅ Done | pending push |
 | 6 | Double-entry ledger, reconciliation | ⏳ Pending | — |
 | 7 | E2E, CI, security review, final cleanup | ⏳ Pending | — |
 
@@ -173,3 +173,52 @@
 ### Verification
 - `go test ./...` — 100% pass (7 packages: messaging, provider, worker + all previous) ✅
 - `go build ./cmd/api; go build ./cmd/worker` — builds cleanly ✅
+
+---
+
+## Phase 5 — Idempotency Hardening, Refunds, Webhooks, Transactional Outbox
+
+**Date:** 2026-10-21  
+**Status:** ✅ Complete
+
+### Files Created & Modified
+
+| File | Purpose |
+|---|---|
+| `migrations/000003_create_outbox_events_table.up.sql` | Transactional outbox table for reliable event dispatch |
+| `migrations/000003_create_outbox_events_table.down.sql` | Revert outbox_events table |
+| `migrations/000004_create_webhook_deliveries_table.up.sql` | Webhook delivery log and retry schedule table |
+| `migrations/000004_create_webhook_deliveries_table.down.sql` | Revert webhook_deliveries table |
+| `services/payment/internal/payments/refund.go` | Refund model, validation, and status definitions |
+| `services/payment/internal/payments/service.go` | Added `CreateRefund`, `GetRefund`, `ListRefunds`, and hardened deep JSON `isPayloadEquivalent` |
+| `services/payment/internal/payments/service_test.go` | Comprehensive refund tests (partial refunds, over-refund prevention, replay conflict) |
+| `services/payment/internal/storage/repository.go` | Added `RefundRepository` interface |
+| `services/payment/internal/storage/memory.go` | In-memory `RefundRepository` with concurrency locks and amount checks |
+| `services/payment/internal/storage/postgres.go` | PostgreSQL `RefundRepository` with `SELECT ... FOR UPDATE` row locking |
+| `services/payment/internal/outbox/model.go` | Outbox event domain entity |
+| `services/payment/internal/outbox/repository.go` | Outbox repository interface |
+| `services/payment/internal/outbox/memory.go` | Thread-safe in-memory outbox repository |
+| `services/payment/internal/outbox/postgres.go` | PostgreSQL outbox repository |
+| `services/payment/internal/outbox/relay.go` | Background Outbox Relay worker for at-least-once publishing |
+| `services/payment/internal/outbox/relay_test.go` | Relay unit tests (batching, recovery on transient failure) |
+| `services/payment/internal/webhooks/model.go` | Webhook delivery models and `whd_` ULID generator |
+| `services/payment/internal/webhooks/signer.go` | HMAC-SHA256 signature generator and timing-safe validator with timestamp tolerance |
+| `services/payment/internal/webhooks/repository.go` | Webhook repository contract |
+| `services/payment/internal/webhooks/memory.go` | In-memory webhooks repository |
+| `services/payment/internal/webhooks/postgres.go` | PostgreSQL webhooks repository |
+| `services/payment/internal/webhooks/dispatcher.go` | Webhook dispatcher with exponential backoff retries |
+| `services/payment/internal/webhooks/dispatcher_test.go` | Signer and dispatcher unit tests (replay prevention, retry escalation) |
+| `services/payment/internal/http/payments.go` | `CreateRefund`, `ListRefunds`, `WebhookTestReceiver` handlers + `Idempotent-Replay` header |
+| `services/payment/internal/http/payments_test.go` | HTTP tests for refunds, replay headers, and webhook receiver |
+| `services/payment/internal/http/router.go` | Route wiring for `/v1/payments/{id}/refunds` and `/v1/webhooks/test-receiver` |
+| `services/payment/internal/worker/processor.go` | Optional Outbox and Webhooks integration on payment resolution |
+| `apps/web/src/lib/api.ts` | Added `Refund` interface, `createRefund`, and `listRefunds` API client |
+| `apps/web/src/components/PaymentDetailsModal.tsx` | Added Refund Management UI, balance tracker, and refund history |
+| `apps/web/src/App.tsx` | Wired live refresh on refund submission |
+
+### Verification
+- `go test ./...` in `services/payment` — 100% pass across all 11 packages ✅
+- `go build ./cmd/api; go build ./cmd/worker` — binaries build cleanly ✅
+- `npm run build` in `apps/web` — builds cleanly with zero TypeScript errors ✅
+- `npm run build` in `services/api-gateway` — builds cleanly ✅
+

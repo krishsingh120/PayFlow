@@ -124,6 +124,7 @@ export function App() {
       <PaymentDetailsModal
         payment={inspectPayment}
         onClose={() => setInspectPayment(null)}
+        onPaymentUpdated={fetchData}
       />
     </div>
   );

@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 	svchttp "github.com/krishsingh120/payflow/services/payment/internal/http"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
+	"github.com/krishsingh120/payflow/services/payment/internal/webhooks"
+	"time"
 )
 
 func setupTestServer() http.Handler {
@@ -229,3 +232,119 @@ func TestListPaymentsEndpoint(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
+
+func TestRefundEndpoints(t *testing.T) {
+	repo := storage.NewMemoryPaymentRepository()
+	svc := payments.NewService(repo)
+	logger := zerolog.Nop()
+	handler := svchttp.NewRouter(logger, svc)
+
+	// Create and transition a payment to SUCCEEDED
+	p, _, err := svc.CreatePayment(context.Background(), "refund-ep-key", payments.CreatePaymentRequest{
+		Amount:   50000,
+		Currency: "INR",
+	})
+	require.NoError(t, err)
+	_, _ = svc.TransitionStatus(context.Background(), p.ID, payments.StatusPending, nil, nil)
+	provRef := "prov_ref_test"
+	_, _ = svc.TransitionStatus(context.Background(), p.ID, payments.StatusSucceeded, &provRef, nil)
+
+	t.Run("POST refund returns 201 Created", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"amount": 20000, "reason": "Customer cancellation"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+p.ID+"/refunds", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "ref-idemp-1")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+		var refResp payments.RefundResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &refResp))
+		assert.Equal(t, int64(20000), refResp.Amount)
+		assert.Equal(t, payments.StatusRefundSucceeded, refResp.Status)
+	})
+
+	t.Run("POST refund replay returns 200 OK with Idempotent-Replay header", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"amount": 20000, "reason": "Customer cancellation"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+p.ID+"/refunds", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "ref-idemp-1")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "true", rec.Header().Get("Idempotent-Replay"))
+	})
+
+	t.Run("GET refunds returns list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/payments/"+p.ID+"/refunds", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var list []*payments.RefundResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+		assert.Equal(t, 1, len(list))
+		assert.Equal(t, int64(20000), list[0].Amount)
+	})
+
+	t.Run("over-refund returns 422 Unprocessable Entity", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"amount": 40000, "reason": "Too much"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+p.ID+"/refunds", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		var errResp svchttp.ErrorResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errResp))
+		assert.Equal(t, "OverRefundExceeded", errResp.Error)
+	})
+}
+
+func TestWebhookTestReceiverEndpoint(t *testing.T) {
+	handler := setupTestServer()
+
+	secret := "whsec_test_secret_development_mode"
+	payload := []byte(`{"event":"payment.succeeded","payment_id":"pay_test_wh"}`)
+	timestamp := time.Now().UTC().Unix()
+	sig := webhooks.Sign(secret, timestamp, payload)
+
+	t.Run("valid signature returns 200 OK", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/test-receiver", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-PayFlow-Signature", sig)
+		req.Header.Set("X-PayFlow-Event", "payment.succeeded")
+		req.Header.Set("X-PayFlow-Delivery", "whd_123")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Equal(t, "received", resp["status"])
+		assert.Equal(t, true, resp["signature_verified"])
+		assert.Equal(t, "payment.succeeded", resp["event"])
+	})
+
+	t.Run("invalid signature returns 401 Unauthorized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/test-receiver", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-PayFlow-Signature", "t=123,v1=invalid_hex_signature")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		var errResp svchttp.ErrorResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errResp))
+		assert.Equal(t, "Unauthorized", errResp.Error)
+	})
+}
+
+

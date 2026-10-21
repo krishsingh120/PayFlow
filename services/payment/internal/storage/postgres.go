@@ -275,3 +275,136 @@ func scanPaymentRow(rows pgx.Rows) (*payments.Payment, error) {
 
 	return &p, nil
 }
+
+// CreateRefund creates a refund in a transaction with SELECT ... FOR UPDATE on payment.
+func (r *PostgresPaymentRepository) CreateRefund(ctx context.Context, ref *payments.Refund) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin tx for refund: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 1. Lock payment row and check status & amount
+	var paymentAmount int64
+	var status string
+	err = tx.QueryRow(ctx, "SELECT amount, status FROM payments WHERE id = $1 FOR UPDATE", ref.PaymentID).Scan(&paymentAmount, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("postgres: lock payment row: %w", err)
+	}
+
+	if status != string(payments.StatusSucceeded) {
+		return payments.ErrRefundInvalidPaymentStatus
+	}
+
+	// 2. Check total active refunds
+	var totalRefunded int64
+	err = tx.QueryRow(ctx, "SELECT COALESCE(SUM(amount), 0) FROM refunds WHERE payment_id = $1 AND status != 'FAILED'", ref.PaymentID).Scan(&totalRefunded)
+	if err != nil {
+		return fmt.Errorf("postgres: calculate total refunded: %w", err)
+	}
+
+	if totalRefunded+ref.Amount > paymentAmount {
+		return payments.ErrRefundAmountExceeded
+	}
+
+	// 3. Insert refund record
+	insertQuery := `
+		INSERT INTO refunds (
+			id, payment_id, amount, status, reason, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err = tx.Exec(ctx, insertQuery,
+		ref.ID,
+		ref.PaymentID,
+		ref.Amount,
+		string(ref.Status),
+		ref.Reason,
+		ref.CreatedAt,
+		ref.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres: insert refund: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// GetRefundByID retrieves a refund by ULID.
+func (r *PostgresPaymentRepository) GetRefundByID(ctx context.Context, id string) (*payments.Refund, error) {
+	query := `
+		SELECT id, payment_id, amount, status, reason, created_at, updated_at
+		FROM refunds
+		WHERE id = $1
+	`
+	var ref payments.Refund
+	var reason *string
+	var status string
+	err := r.pool.QueryRow(ctx, query, id).Scan(
+		&ref.ID,
+		&ref.PaymentID,
+		&ref.Amount,
+		&status,
+		&reason,
+		&ref.CreatedAt,
+		&ref.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("postgres: query refund: %w", err)
+	}
+	ref.Status = payments.RefundStatus(status)
+	if reason != nil {
+		ref.Reason = *reason
+	}
+	return &ref, nil
+}
+
+// ListRefundsByPaymentID retrieves all refunds for a payment.
+func (r *PostgresPaymentRepository) ListRefundsByPaymentID(ctx context.Context, paymentID string) ([]*payments.Refund, error) {
+	query := `
+		SELECT id, payment_id, amount, status, reason, created_at, updated_at
+		FROM refunds
+		WHERE payment_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := r.pool.Query(ctx, query, paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list refunds: %w", err)
+	}
+	defer rows.Close()
+
+	var res []*payments.Refund
+	for rows.Next() {
+		var ref payments.Refund
+		var reason *string
+		var status string
+		if err := rows.Scan(
+			&ref.ID,
+			&ref.PaymentID,
+			&ref.Amount,
+			&status,
+			&reason,
+			&ref.CreatedAt,
+			&ref.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres: scan refund row: %w", err)
+		}
+		ref.Status = payments.RefundStatus(status)
+		if reason != nil {
+			ref.Reason = *reason
+		}
+		res = append(res, &ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: iterate refunds: %w", err)
+	}
+	if res == nil {
+		res = []*payments.Refund{}
+	}
+	return res, nil
+}

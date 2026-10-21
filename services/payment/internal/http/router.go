@@ -35,6 +35,11 @@ func NewRouter(log zerolog.Logger, paymentSvc payments.Service) http.Handler {
 			r.Post("/", paymentHandler.CreatePayment)
 			r.Get("/", paymentHandler.ListPayments)
 			r.Get("/{id}", paymentHandler.GetPayment)
+			r.Post("/{id}/refunds", paymentHandler.CreateRefund)
+			r.Get("/{id}/refunds", paymentHandler.ListRefunds)
+		})
+		r.Route("/webhooks", func(r chi.Router) {
+			r.Post("/test-receiver", paymentHandler.WebhookTestReceiver)
 		})
 	})
 
