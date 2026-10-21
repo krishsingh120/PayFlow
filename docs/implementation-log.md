@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 0 | Repository inspection, architecture, plan | ✅ Done | — |
 | 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | `891b455` |
-| 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | pending push |
+| 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | `2316fc7` |
 | 3 | API Gateway, React frontend | ⏳ Pending | — |
 | 4 | RabbitMQ, Go worker, simulated provider | ⏳ Pending | — |
 | 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ Pending | — |
