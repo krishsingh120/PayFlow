@@ -1,6 +1,6 @@
 // Command api is the entry point for the PayFlow HTTP server.
-// It loads configuration, sets up structured logging, wires the router,
-// and starts a gracefully-shutting-down HTTP server.
+// It loads configuration, sets up structured logging, connects to the database,
+// wires the router, and starts a gracefully-shutting-down HTTP server.
 package main
 
 import (
@@ -12,12 +12,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/krishsingh120/payflow/services/payment/internal/config"
 	svchttp "github.com/krishsingh120/payflow/services/payment/internal/http"
+	"github.com/krishsingh120/payflow/services/payment/internal/payments"
+	"github.com/krishsingh120/payflow/services/payment/internal/storage"
 )
 
 func main() {
@@ -37,8 +40,42 @@ func main() {
 		Int("port", cfg.Port).
 		Msg("starting payment-api")
 
+	// ── Database & Storage ──────────────────────────────────────────────────
+	var repo storage.PaymentRepository
+	var pool *pgxpool.Pool
+
+	if cfg.DatabaseURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var dbErr error
+		pool, dbErr = pgxpool.New(ctx, cfg.DatabaseURL)
+		cancel()
+
+		if dbErr == nil {
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := pool.Ping(pingCtx); err == nil {
+				logger.Info().Msg("connected to PostgreSQL database")
+				repo = storage.NewPostgresPaymentRepository(pool)
+			} else {
+				logger.Warn().Err(err).Msg("PostgreSQL ping failed — falling back to memory repository")
+				pool.Close()
+				pool = nil
+			}
+			pingCancel()
+		} else {
+			logger.Warn().Err(dbErr).Msg("PostgreSQL connection failed — falling back to memory repository")
+		}
+	}
+
+	if repo == nil {
+		logger.Warn().Msg("running with in-memory payment repository (no persistent database configured)")
+		repo = storage.NewMemoryPaymentRepository()
+	}
+
+	// ── Payment Service ─────────────────────────────────────────────────────
+	paymentService := payments.NewService(repo)
+
 	// ── Router ──────────────────────────────────────────────────────────────
-	router := svchttp.NewRouter(logger)
+	router := svchttp.NewRouter(logger, paymentService)
 
 	// ── HTTP Server ─────────────────────────────────────────────────────────
 	srv := &http.Server{
@@ -50,7 +87,6 @@ func main() {
 	}
 
 	// ── Graceful Shutdown ───────────────────────────────────────────────────
-	// Run server in a goroutine so the main goroutine can wait for OS signals.
 	go func() {
 		logger.Info().Str("addr", srv.Addr).Msg("payment-api listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -71,12 +107,15 @@ func main() {
 		logger.Error().Err(err).Msg("server shutdown error")
 	}
 
+	if pool != nil {
+		pool.Close()
+		logger.Info().Msg("closed database connection pool")
+	}
+
 	logger.Info().Msg("payment-api stopped")
 }
 
 // buildLogger returns a zerolog logger configured for the current environment.
-// In development it outputs pretty-printed console logs; in production it
-// outputs JSON for log aggregation.
 func buildLogger(cfg *config.Config) zerolog.Logger {
 	level, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {

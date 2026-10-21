@@ -8,11 +8,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
+
+	"github.com/krishsingh120/payflow/services/payment/internal/payments"
 )
 
-// NewRouter constructs and returns the root Chi router with all middleware
-// and route groups registered.
-func NewRouter(log zerolog.Logger) http.Handler {
+// NewRouter constructs and returns the root Chi router with all middleware,
+// health check, and payment routes registered.
+func NewRouter(log zerolog.Logger, paymentSvc payments.Service) http.Handler {
 	r := chi.NewRouter()
 
 	// ── Global middleware ────────────────────────────────────────────────────
@@ -26,9 +28,14 @@ func NewRouter(log zerolog.Logger) http.Handler {
 	r.Get("/v1/health", healthHandler)
 
 	// ── API v1 ──────────────────────────────────────────────────────────────
-	// Payment routes will be mounted here in Phase 2.
+	paymentHandler := NewPaymentHandler(paymentSvc)
+
 	r.Route("/v1", func(r chi.Router) {
-		// placeholder — payments, refunds added in Phase 2
+		r.Route("/payments", func(r chi.Router) {
+			r.Post("/", paymentHandler.CreatePayment)
+			r.Get("/", paymentHandler.ListPayments)
+			r.Get("/{id}", paymentHandler.GetPayment)
+		})
 	})
 
 	return r

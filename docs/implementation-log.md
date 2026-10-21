@@ -5,8 +5,8 @@
 | Phase | Description | Status | Commit |
 |---|---|---|---|
 | 0 | Repository inspection, architecture, plan | ✅ Done | — |
-| 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | see below |
-| 2 | Payment Service, PostgreSQL schema, state machine, tests | ⏳ Pending | — |
+| 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | `891b455` |
+| 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | pending push |
 | 3 | API Gateway, React frontend | ⏳ Pending | — |
 | 4 | RabbitMQ, Go worker, simulated provider | ⏳ Pending | — |
 | 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ Pending | — |
@@ -73,6 +73,40 @@
 - `npm install && npm run build` — TypeScript gateway builds ✅
 
 ### Commit
-- **Hash:** _(recorded after push)_
+- **Hash:** `891b455`
 - **Message:** `feat(skeleton): Phase 1 — monorepo skeleton, Docker Compose, health endpoints`
-- **Push Status:** _(recorded after push)_
+- **Push Status:** Pushed to `origin/main` ✅
+
+---
+
+## Phase 2 — Go Payment Service & Storage
+
+**Date:** 2026-10-21  
+**Status:** ✅ Complete
+
+### Files Created & Modified
+
+| File | Purpose |
+|---|---|
+| `migrations/000001_create_payments_table.up.sql` | Payments table schema, constraints, indexes |
+| `migrations/000001_create_payments_table.down.sql` | Rollback payments table |
+| `migrations/000002_create_refunds_table.up.sql` | Refunds table schema with over-refund trigger |
+| `migrations/000002_create_refunds_table.down.sql` | Rollback refunds table and trigger |
+| `services/payment/internal/payments/model.go` | Payment entity, status enum, state machine rules, validation |
+| `services/payment/internal/payments/ulid.go` | Monotonic ULID generator with `pay_` / `ref_` prefix |
+| `services/payment/internal/payments/service.go` | Business service: idempotency, state transitions, listing |
+| `services/payment/internal/storage/repository.go` | Storage contracts and domain errors |
+| `services/payment/internal/storage/postgres.go` | Production PostgreSQL repository using `pgx/v5` |
+| `services/payment/internal/storage/memory.go` | Thread-safe in-memory repository for testing/standalone |
+| `services/payment/internal/http/payments.go` | HTTP handlers for `POST /v1/payments`, `GET /v1/payments/{id}`, `GET /v1/payments` |
+| `services/payment/internal/http/router.go` | Chi routing for payments endpoints |
+| `services/payment/cmd/api/main.go` | Server startup wiring pool/repository/service |
+| `services/payment/internal/payments/state_machine_test.go` | State machine transition & validation tests |
+| `services/payment/internal/payments/service_test.go` | Payment service business logic tests |
+| `services/payment/internal/storage/memory_test.go` | Storage repository tests |
+| `services/payment/internal/http/payments_test.go` | HTTP integration tests using `httptest` |
+
+### Verification
+- `go test ./...` — 100% passed across all packages (`internal/http`, `internal/payments`, `internal/storage`) ✅
+- `go build ./cmd/api; go build ./cmd/worker` — binaries build cleanly with zero warnings ✅
+- `npm run build` in `services/api-gateway` — compiles cleanly ✅
