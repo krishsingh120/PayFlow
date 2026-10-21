@@ -19,6 +19,7 @@ import (
 
 	"github.com/krishsingh120/payflow/services/payment/internal/config"
 	svchttp "github.com/krishsingh120/payflow/services/payment/internal/http"
+	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
 )
@@ -71,8 +72,28 @@ func main() {
 		repo = storage.NewMemoryPaymentRepository()
 	}
 
+	// ── Messaging Publisher ─────────────────────────────────────────────────
+	var publisher messaging.Publisher
+	var rmqBroker *messaging.RabbitMQBroker
+
+	if cfg.RabbitMQURL != "" {
+		var rmqErr error
+		rmqBroker, rmqErr = messaging.NewRabbitMQBroker(cfg.RabbitMQURL, logger)
+		if rmqErr == nil {
+			logger.Info().Msg("connected to RabbitMQ broker")
+			publisher = rmqBroker
+		} else {
+			logger.Warn().Err(rmqErr).Msg("RabbitMQ connection failed — falling back to memory broker")
+		}
+	}
+
+	if publisher == nil {
+		logger.Warn().Msg("running with in-memory message publisher")
+		publisher = messaging.NewMemoryBroker()
+	}
+
 	// ── Payment Service ─────────────────────────────────────────────────────
-	paymentService := payments.NewService(repo)
+	paymentService := payments.NewService(repo).WithPublisher(publisher)
 
 	// ── Router ──────────────────────────────────────────────────────────────
 	router := svchttp.NewRouter(logger, paymentService)
@@ -105,6 +126,11 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error().Err(err).Msg("server shutdown error")
+	}
+
+	if rmqBroker != nil {
+		_ = rmqBroker.Close()
+		logger.Info().Msg("closed RabbitMQ connection")
 	}
 
 	if pool != nil {

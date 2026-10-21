@@ -2,6 +2,7 @@ package payments
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -39,14 +40,26 @@ type Service interface {
 	TransitionStatus(ctx context.Context, id string, newStatus PaymentStatus, providerRef, failureReason *string) (*PaymentResponse, error)
 }
 
+// EventPublisher defines the contract for emitting payment lifecycle events to message brokers.
+type EventPublisher interface {
+	Publish(ctx context.Context, routingKey string, payload []byte) error
+}
+
 // PaymentService implements the Service interface.
 type PaymentService struct {
-	repo Repository
+	repo      Repository
+	publisher EventPublisher
 }
 
 // NewService creates a new PaymentService with the given repository.
 func NewService(repo Repository) *PaymentService {
 	return &PaymentService{repo: repo}
+}
+
+// WithPublisher attaches an event publisher for asynchronous job dispatching.
+func (s *PaymentService) WithPublisher(p EventPublisher) *PaymentService {
+	s.publisher = p
+	return s
 }
 
 // CreatePayment handles payment creation with strict idempotency and validation.
@@ -99,6 +112,15 @@ func (s *PaymentService) CreatePayment(ctx context.Context, idempotencyKey strin
 			return nil, false, ErrIdempotencyConflict
 		}
 		return nil, false, fmt.Errorf("failed to create payment: %w", err)
+	}
+
+	// 4. Dispatch payment.created event to message broker for background worker processing
+	if s.publisher != nil {
+		jobPayload, _ := json.Marshal(map[string]any{
+			"payment_id": payment.ID,
+			"created_at": payment.CreatedAt,
+		})
+		_ = s.publisher.Publish(ctx, "payment.created", jobPayload)
 	}
 
 	return payment.ToResponse(), false, nil

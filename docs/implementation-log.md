@@ -8,7 +8,7 @@
 | 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done | `891b455` |
 | 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done | `2316fc7` |
 | 3 | API Gateway, React frontend | ✅ Done | `1698021` |
-| 4 | RabbitMQ, Go worker, simulated provider | ⏳ Pending | — |
+| 4 | RabbitMQ, Go worker, simulated provider | ✅ Done | pending push |
 | 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ Pending | — |
 | 6 | Double-entry ledger, reconciliation | ⏳ Pending | — |
 | 7 | E2E, CI, security review, final cleanup | ⏳ Pending | — |
@@ -140,3 +140,36 @@
 - `npm run build` in `apps/web` — built cleanly in 423ms (`dist/` generated with zero type errors) ✅
 - `npm run build` in `services/api-gateway` — compiles cleanly ✅
 - `go test ./...` in `services/payment` — 100% test pass rate across all packages ✅
+
+---
+
+## Phase 4 — RabbitMQ Integration, Go Worker, Simulated Provider
+
+**Date:** 2026-10-21  
+**Status:** ✅ Complete
+
+### Files Created & Modified
+
+| File | Purpose |
+|---|---|
+| `services/payment/internal/provider/provider.go` | SimulatedProvider: deterministic test rules (amount-based decline/timeout triggers) |
+| `services/payment/internal/provider/provider_test.go` | Provider outcome rules tests |
+| `services/payment/internal/messaging/broker.go` | Messaging interfaces + constants (queue names, routing keys, DLX) |
+| `services/payment/internal/messaging/rabbitmq.go` | Production RabbitMQ broker: durable topic exchange, DLQ, manual ack/nack |
+| `services/payment/internal/messaging/memory.go` | In-memory broker (dev/test fallback) |
+| `services/payment/internal/messaging/memory_test.go` | Message delivery unit tests |
+| `services/payment/internal/worker/processor.go` | PaymentProcessor: CREATED→PENDING→SUCCEEDED/FAILED/UNKNOWN transitions |
+| `services/payment/internal/worker/processor_test.go` | Worker tests: success, decline, timeout, terminal idempotency, malformed payload |
+| `services/payment/internal/payments/service.go` | Added EventPublisher interface + publish `payment.created` on create |
+| `services/payment/cmd/api/main.go` | Wire RabbitMQ publisher (fallback to memory), publish on payment creation |
+| `services/payment/cmd/worker/main.go` | Wire storage, provider, processor, and consumer for job processing loop |
+
+### Architecture
+- `POST /v1/payments` → Go API persists payment (CREATED) → publishes `payment.created` to RabbitMQ (or in-memory fallback)
+- Worker consumes `payment.processing.queue` → PENDING → calls SimulatedProvider → resolves SUCCEEDED / FAILED / UNKNOWN
+- Failed messages routed to DLX / DLQ (no data loss)
+- Worker runs standalone without RabbitMQ/Postgres (memory fallback for local dev)
+
+### Verification
+- `go test ./...` — 100% pass (7 packages: messaging, provider, worker + all previous) ✅
+- `go build ./cmd/api; go build ./cmd/worker` — builds cleanly ✅

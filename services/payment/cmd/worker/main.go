@@ -11,11 +11,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/krishsingh120/payflow/services/payment/internal/config"
+	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
+	"github.com/krishsingh120/payflow/services/payment/internal/provider"
+	"github.com/krishsingh120/payflow/services/payment/internal/storage"
+	"github.com/krishsingh120/payflow/services/payment/internal/worker"
 )
 
 func main() {
@@ -34,28 +39,86 @@ func main() {
 		Str("env", cfg.Env).
 		Msg("starting payment-worker")
 
-	// ── Graceful Shutdown ───────────────────────────────────────────────────
+	// ── Database & Storage ──────────────────────────────────────────────────
+	var repo storage.PaymentRepository
+	var pool *pgxpool.Pool
+
+	if cfg.DatabaseURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var dbErr error
+		pool, dbErr = pgxpool.New(ctx, cfg.DatabaseURL)
+		cancel()
+
+		if dbErr == nil {
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := pool.Ping(pingCtx); err == nil {
+				logger.Info().Msg("connected to PostgreSQL database")
+				repo = storage.NewPostgresPaymentRepository(pool)
+			} else {
+				logger.Warn().Err(err).Msg("PostgreSQL ping failed — falling back to memory repository")
+				pool.Close()
+				pool = nil
+			}
+			pingCancel()
+		} else {
+			logger.Warn().Err(dbErr).Msg("PostgreSQL connection failed — falling back to memory repository")
+		}
+	}
+
+	if repo == nil {
+		logger.Warn().Msg("running with in-memory payment repository")
+		repo = storage.NewMemoryPaymentRepository()
+	}
+
+	// ── Simulated Provider ──────────────────────────────────────────────────
+	simProvider := provider.NewSimulatedProvider(cfg.ProviderDefaultOutcome, cfg.ProviderTimeoutMs)
+
+	// ── Processor ───────────────────────────────────────────────────────────
+	processor := worker.NewPaymentProcessor(repo, simProvider, logger)
+
+	// ── Messaging Consumer ──────────────────────────────────────────────────
+	var consumer messaging.Consumer
+
+	if cfg.RabbitMQURL != "" {
+		rmq, err := messaging.NewRabbitMQBroker(cfg.RabbitMQURL, logger)
+		if err == nil {
+			logger.Info().Msg("connected to RabbitMQ broker")
+			consumer = rmq
+		} else {
+			logger.Warn().Err(err).Msg("RabbitMQ connection failed — falling back to memory broker")
+		}
+	}
+
+	if consumer == nil {
+		logger.Warn().Msg("running with in-memory message consumer")
+		consumer = messaging.NewMemoryBroker()
+	}
+
+	// ── Start Consumption ───────────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 
+	err = consumer.Consume(ctx, messaging.QueuePaymentProcessing, processor.ProcessJob)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to start consuming payment jobs")
+	}
+
+	logger.Info().
+		Str("queue", messaging.QueuePaymentProcessing).
+		Msg("payment-worker actively listening for jobs")
+
+	// ── Graceful Shutdown ───────────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	// Worker processing loop will be connected in Phase 4 (RabbitMQ + provider).
-	// For now, we just block until a shutdown signal is received.
-	logger.Info().Msg("payment-worker running — awaiting jobs (RabbitMQ wired in Phase 4)")
-
 	<-quit
-	logger.Info().Msg("shutdown signal received — stopping worker")
+
+	logger.Info().Msg("shutdown signal received — draining worker")
 	cancel()
 
-	// Allow in-flight jobs up to 30 seconds to complete.
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
+	_ = consumer.Close()
+	if pool != nil {
+		pool.Close()
+	}
 
-	// Phase 4: wait for worker goroutines to drain using shutdownCtx.
-	_ = shutdownCtx
-
-	_ = ctx
 	logger.Info().Msg("payment-worker stopped")
 }
 
