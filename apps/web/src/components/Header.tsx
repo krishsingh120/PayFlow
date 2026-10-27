@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, Activity, Plus, RefreshCw, Zap } from 'lucide-react';
+import { ShieldCheck, Activity, Plus, RefreshCw, Zap, Scale } from 'lucide-react';
 import { checkGatewayHealth } from '../lib/api';
 
 interface HeaderProps {
   onOpenCreateModal: () => void;
   onOpenIdempotencyLab: () => void;
+  onOpenReconciliation?: () => void;
   onRefreshData: () => void;
   isRefreshing: boolean;
 }
@@ -12,6 +13,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   onOpenCreateModal,
   onOpenIdempotencyLab,
+  onOpenReconciliation,
   onRefreshData,
   isRefreshing,
 }) => {
@@ -115,6 +117,23 @@ export const Header: React.FC<HeaderProps> = ({
             <Zap size={15} />
             Idempotency Lab
           </button>
+
+          {/* Reconciliation Audit CTA */}
+          {onOpenReconciliation && (
+            <button
+              className="btn btn-secondary"
+              onClick={onOpenReconciliation}
+              style={{
+                borderColor: 'rgba(56, 189, 248, 0.4)',
+                background: 'rgba(56, 189, 248, 0.08)',
+                color: '#38BDF8',
+              }}
+              title="Run Double-Entry Ledger & Settlement Reconciliation Audit"
+            >
+              <Scale size={15} />
+              Reconciliation
+            </button>
+          )}
 
           {/* New Payment CTA */}
           <button className="btn btn-primary" onClick={onOpenCreateModal}>

@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/krishsingh120/payflow/services/payment/internal/config"
+	"github.com/krishsingh120/payflow/services/payment/internal/ledger"
 	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
 	"github.com/krishsingh120/payflow/services/payment/internal/provider"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
@@ -73,8 +74,18 @@ func main() {
 	// ── Simulated Provider ──────────────────────────────────────────────────
 	simProvider := provider.NewSimulatedProvider(cfg.ProviderDefaultOutcome, cfg.ProviderTimeoutMs)
 
+	// ── Ledger Service ──────────────────────────────────────────────────────
+	var ledgerRepo ledger.Repository
+	if pool != nil {
+		ledgerRepo = ledger.NewPostgresRepository(pool)
+	} else {
+		ledgerRepo = ledger.NewMemoryRepository()
+	}
+	ledgerService := ledger.NewService(ledgerRepo, logger)
+
 	// ── Processor ───────────────────────────────────────────────────────────
-	processor := worker.NewPaymentProcessor(repo, simProvider, logger)
+	processor := worker.NewPaymentProcessor(repo, simProvider, logger).
+		WithLedger(ledgerService)
 
 	// ── Messaging Consumer ──────────────────────────────────────────────────
 	var consumer messaging.Consumer

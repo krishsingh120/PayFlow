@@ -9,12 +9,19 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 
+	"github.com/krishsingh120/payflow/services/payment/internal/ledger"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
+	"github.com/krishsingh120/payflow/services/payment/internal/reconciliation"
 )
 
 // NewRouter constructs and returns the root Chi router with all middleware,
 // health check, and payment routes registered.
-func NewRouter(log zerolog.Logger, paymentSvc payments.Service) http.Handler {
+func NewRouter(
+	log zerolog.Logger,
+	paymentSvc payments.Service,
+	ledgerSvc ledger.Service,
+	reconciliationEngine *reconciliation.Engine,
+) http.Handler {
 	r := chi.NewRouter()
 
 	// ── Global middleware ────────────────────────────────────────────────────
@@ -41,6 +48,21 @@ func NewRouter(log zerolog.Logger, paymentSvc payments.Service) http.Handler {
 		r.Route("/webhooks", func(r chi.Router) {
 			r.Post("/test-receiver", paymentHandler.WebhookTestReceiver)
 		})
+		if ledgerSvc != nil {
+			ledgerHandler := NewLedgerHandler(ledgerSvc)
+			r.Route("/ledger", func(r chi.Router) {
+				r.Get("/payments/{id}", ledgerHandler.GetPaymentLedger)
+				r.Get("/accounts", ledgerHandler.GetAccountBalances)
+				r.Get("/entries", ledgerHandler.ListEntries)
+			})
+		}
+		if reconciliationEngine != nil {
+			reconciliationHandler := NewReconciliationHandler(reconciliationEngine)
+			r.Route("/reconciliation", func(r chi.Router) {
+				r.Post("/run", reconciliationHandler.Run)
+				r.Get("/reports/latest", reconciliationHandler.GetLatestReport)
+			})
+		}
 	})
 
 	return r

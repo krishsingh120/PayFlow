@@ -222,3 +222,55 @@
 - `npm run build` in `apps/web` — builds cleanly with zero TypeScript errors ✅
 - `npm run build` in `services/api-gateway` — builds cleanly ✅
 
+---
+
+## Phase 6 — Double-Entry Ledger & Automated Reconciliation Engine
+
+**Date:** 2026-10-28  
+**Status:** ✅ Complete
+
+### Files Created & Modified
+
+| File | Purpose |
+|---|---|
+| `migrations/000005_create_ledger_entries_table.up.sql` | Migration for immutable double-entry ledger journals |
+| `migrations/000005_create_ledger_entries_table.down.sql` | Revert ledger_entries table |
+| `services/payment/internal/ledger/model.go` | Chart of accounts (`receivable`, `revenue`, `refund_liability`), directions (`DEBIT`, `CREDIT`), and `VerifyInvariant` |
+| `services/payment/internal/ledger/repository.go` | Double-entry repository interface definition |
+| `services/payment/internal/ledger/memory.go` | Thread-safe in-memory double-entry ledger repository |
+| `services/payment/internal/ledger/postgres.go` | Atomic multi-entry PostgreSQL double-entry repository |
+| `services/payment/internal/ledger/service.go` | Double-entry journal recorder, account balance calculator, and global audit service |
+| `services/payment/internal/ledger/service_test.go` | Unit tests for accounting invariants, payment journals, refund journals, and audit |
+| `services/payment/internal/provider/provider.go` | Added `QueryPaymentStatus` to Provider interface and simulated provider implementation |
+| `services/payment/internal/reconciliation/model.go` | Reconciliation discrepancy types, discrepancy entries, and report structs |
+| `services/payment/internal/reconciliation/engine.go` | Automated audit loop: bank settlement verification for `UNKNOWN` states, ledger orphan self-healing, global balance audit |
+| `services/payment/internal/reconciliation/engine_test.go` | Reconciliation tests covering timeout resolution, decline handling, and ledger auto-healing |
+| `services/payment/internal/worker/processor.go` | Wired automatic double-entry recording on `OutcomeSuccess` |
+| `services/payment/internal/payments/service.go` | Added `LedgerRecorder` consumer interface and wired double-entry recording on refund completion |
+| `services/payment/internal/http/ledger.go` | REST handlers: `/v1/ledger/payments/{id}`, `/v1/ledger/accounts`, `/v1/reconciliation/run`, `/v1/reconciliation/reports/latest` |
+| `services/payment/internal/http/router.go` | Route wiring for ledger inspection and reconciliation runs |
+| `services/payment/internal/http/payments_test.go` | HTTP tests for ledger queries, account balances, and reconciliation audits |
+| `services/payment/cmd/api/main.go` | Wired ledger repository, ledger service, and reconciliation engine in API binary |
+| `services/payment/cmd/worker/main.go` | Wired ledger repository and service in async worker daemon |
+| `apps/web/src/lib/api.ts` | Added ledger and reconciliation TypeScript types and API client methods |
+| `apps/web/src/components/PaymentDetailsModal.tsx` | Added Double-Entry Journal inspection section with invariant validation indicator |
+| `apps/web/src/components/ReconciliationModal.tsx` | Interactive modal to run on-demand audits, view resolved unknowns, and discrepancy breakdown |
+| `apps/web/src/components/Header.tsx` | Added Reconciliation Audit launch button to header navigation |
+| `apps/web/src/App.tsx` | Connected Reconciliation modal and auto-refresh integration |
+
+### Accounting Invariant & Architecture
+- **Double-Entry Guarantee:** Financial actions strictly produce balanced paired entries (`Sum(DEBIT) == Sum(CREDIT)`).
+  - Payment Success: `DEBIT receivable (amount)` + `CREDIT revenue (amount)`
+  - Refund Success: `DEBIT refund_liability (refundAmount)` + `CREDIT receivable (refundAmount)`
+- **Automated Self-Healing Reconciliation:**
+  - Audits pending `UNKNOWN` payments against the banking provider gateway.
+  - Automatically transitions them to terminal `SUCCEEDED` or `FAILED`.
+  - Self-heals orphaned payments missing double-entry journals if process crashed mid-flight.
+  - Runs global ledger invariant checks to alert on any balance discrepancies.
+
+### Verification
+- `go test ./...` in `services/payment` — 100% pass across all 13 packages ✅
+- `go build ./cmd/api; go build ./cmd/worker` — builds cleanly ✅
+- `npm run build` in `apps/web` — builds cleanly with zero TypeScript errors ✅
+
+

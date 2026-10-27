@@ -1,7 +1,7 @@
 import React from 'react';
-import { X, Copy, Check, RotateCcw, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { formatINR, listRefunds, createRefund } from '../lib/api';
-import type { Payment, Refund } from '../lib/api';
+import { X, Copy, Check, RotateCcw, AlertCircle, CheckCircle2, BookOpen } from 'lucide-react';
+import { formatINR, listRefunds, createRefund, getPaymentLedger } from '../lib/api';
+import type { Payment, Refund, PaymentLedgerSummary } from '../lib/api';
 
 interface PaymentDetailsModalProps {
   payment: Payment | null;
@@ -13,6 +13,7 @@ export const PaymentDetailsModal: React.FC<PaymentDetailsModalProps> = ({ paymen
   const [copied, setCopied] = React.useState(false);
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [loadingRefunds, setLoadingRefunds] = React.useState(false);
+  const [ledgerSummary, setLedgerSummary] = React.useState<PaymentLedgerSummary | null>(null);
   const [refundAmountRupees, setRefundAmountRupees] = React.useState('');
   const [refundReason, setRefundReason] = React.useState('');
   const [refunding, setRefunding] = React.useState(false);
@@ -35,6 +36,11 @@ export const PaymentDetailsModal: React.FC<PaymentDetailsModalProps> = ({ paymen
       } else {
         setRefunds([]);
       }
+
+      getPaymentLedger(payment.id).then((res) => {
+        if (res.data) setLedgerSummary(res.data);
+        else setLedgerSummary(null);
+      });
     }
   }, [payment]);
 
@@ -302,6 +308,95 @@ export const PaymentDetailsModal: React.FC<PaymentDetailsModalProps> = ({ paymen
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Double-Entry Ledger Section */}
+        {ledgerSummary && ledgerSummary.entries.length > 0 && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: 16,
+              background: 'rgba(15, 23, 42, 0.4)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <BookOpen size={16} color="var(--emerald-400)" />
+                <h4 style={{ fontSize: 14, fontWeight: 600, color: '#F8FAFC' }}>Double-Entry Journal</h4>
+              </div>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  background: ledgerSummary.is_balanced ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+                  color: ledgerSummary.is_balanced ? 'var(--emerald-400)' : '#F43F5E',
+                  border: `1px solid ${ledgerSummary.is_balanced ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`,
+                }}
+              >
+                {ledgerSummary.is_balanced ? '✓ INVARIANT BALANCED' : '⚠ UNBALANCED'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+              {ledgerSummary.entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    background: 'rgba(2, 6, 23, 0.6)',
+                    borderRadius: 6,
+                    border: '1px solid rgba(255, 255, 255, 0.04)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        background: entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                        color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC',
+                        border: `1px solid ${entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(168, 85, 247, 0.3)'}`,
+                      }}
+                    >
+                      {entry.direction}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: '#F8FAFC' }}>
+                      {entry.account}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <strong style={{ color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC' }}>
+                      {formatINR(entry.amount)}
+                    </strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: '1px solid var(--border-subtle)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 11,
+                color: 'var(--text-dim)',
+              }}
+            >
+              <span>Total Debits: <strong style={{ color: '#38BDF8' }}>{formatINR(ledgerSummary.total_debit)}</strong></span>
+              <span>Total Credits: <strong style={{ color: '#C084FC' }}>{formatINR(ledgerSummary.total_credit)}</strong></span>
+            </div>
           </div>
         )}
 

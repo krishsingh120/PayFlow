@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/krishsingh120/payflow/services/payment/internal/ledger"
 	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
 	"github.com/krishsingh120/payflow/services/payment/internal/outbox"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
@@ -26,6 +27,7 @@ type PaymentProcessor struct {
 	outboxRepo  outbox.Repository
 	webhookRepo webhooks.Repository
 	webhookURL  string
+	ledgerSvc   ledger.Service
 }
 
 // NewPaymentProcessor creates a new processor with the supplied dependencies.
@@ -51,6 +53,12 @@ func (p *PaymentProcessor) WithOutbox(repo outbox.Repository) *PaymentProcessor 
 func (p *PaymentProcessor) WithWebhooks(repo webhooks.Repository, webhookURL string) *PaymentProcessor {
 	p.webhookRepo = repo
 	p.webhookURL = webhookURL
+	return p
+}
+
+// WithLedger attaches a Ledger service to record double-entry journals on payment success.
+func (p *PaymentProcessor) WithLedger(svc ledger.Service) *PaymentProcessor {
+	p.ledgerSvc = svc
 	return p
 }
 
@@ -139,6 +147,13 @@ func (p *PaymentProcessor) ProcessJob(ctx context.Context, payload []byte) error
 			Str("provider_ref", result.ProviderRef).
 			Dur("duration", time.Since(start)).
 			Msg("payment successfully processed")
+
+		if p.ledgerSvc != nil {
+			if lErr := p.ledgerSvc.RecordPaymentSucceeded(ctx, payment.ID, payment.Amount); lErr != nil {
+				p.logger.Error().Err(lErr).Str("payment_id", payment.ID).
+					Msg("failed to record ledger entries for payment")
+			}
+		}
 
 		p.emitOutcomeEvents(ctx, payment.ID, "payment.succeeded", payment.Amount, payment.Currency, &result.ProviderRef, nil)
 

@@ -40,6 +40,7 @@ type ProcessResult struct {
 // Provider defines the contract for processing payments with external acquirers.
 type Provider interface {
 	ProcessPayment(ctx context.Context, req ProcessRequest) (*ProcessResult, error)
+	QueryPaymentStatus(ctx context.Context, paymentID string) (*ProcessResult, error)
 }
 
 // SimulatedProvider is an in-process mock simulating a bank switch with deterministic test rules.
@@ -150,6 +151,27 @@ func (p *SimulatedProvider) ProcessPayment(ctx context.Context, req ProcessReque
 	}
 }
 
+// QueryPaymentStatus simulates bank settlement query for reconciliation.
+// Returns the definitive bank ledger status for a transaction that had timed out.
+func (p *SimulatedProvider) QueryPaymentStatus(ctx context.Context, paymentID string) (*ProcessResult, error) {
+	if strings.Contains(strings.ToLower(paymentID), "fail") {
+		reason := "bank network settlement records decline"
+		return &ProcessResult{
+			Outcome:       OutcomeDecline,
+			ProviderRef:   generateProviderRef(),
+			FailureReason: &reason,
+			Latency:       5 * time.Millisecond,
+		}, nil
+	}
+
+	return &ProcessResult{
+		Outcome:     OutcomeSuccess,
+		ProviderRef: generateProviderRef(),
+		Latency:     5 * time.Millisecond,
+	}, nil
+}
+
 func generateProviderRef() string {
 	return fmt.Sprintf("prov_sim_%s", payments.NewPaymentID()[4:])
 }
+

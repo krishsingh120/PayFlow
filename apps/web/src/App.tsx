@@ -5,6 +5,7 @@ import { TransactionList } from './components/TransactionList';
 import { CreatePaymentModal } from './components/CreatePaymentModal';
 import { IdempotencyTesterModal } from './components/IdempotencyTesterModal';
 import { PaymentDetailsModal } from './components/PaymentDetailsModal';
+import { ReconciliationModal } from './components/ReconciliationModal';
 import { listPayments } from './lib/api';
 import type { Payment } from './lib/api';
 
@@ -19,6 +20,7 @@ export function App() {
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isIdempOpen, setIsIdempOpen] = useState(false);
+  const [isReconOpen, setIsReconOpen] = useState(false);
   const [inspectPayment, setInspectPayment] = useState<Payment | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -54,6 +56,7 @@ export function App() {
       <Header
         onOpenCreateModal={() => setIsCreateOpen(true)}
         onOpenIdempotencyLab={() => setIsIdempOpen(true)}
+        onOpenReconciliation={() => setIsReconOpen(true)}
         onRefreshData={fetchData}
         isRefreshing={isRefreshing}
       />
@@ -118,6 +121,12 @@ export function App() {
       <IdempotencyTesterModal
         isOpen={isIdempOpen}
         onClose={() => setIsIdempOpen(false)}
+        onSuccess={fetchData}
+      />
+
+      <ReconciliationModal
+        isOpen={isReconOpen}
+        onClose={() => setIsReconOpen(false)}
         onSuccess={fetchData}
       />
 

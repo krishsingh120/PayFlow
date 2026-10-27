@@ -263,3 +263,126 @@ export async function listRefunds(paymentId: string): Promise<ApiResponse<Refund
   }
 }
 
+export interface LedgerEntry {
+  id: number;
+  payment_id: string;
+  account: string;
+  direction: 'DEBIT' | 'CREDIT';
+  amount: number;
+  created_at: string;
+}
+
+export interface PaymentLedgerSummary {
+  payment_id: string;
+  entries: LedgerEntry[];
+  total_debit: number;
+  total_credit: number;
+  is_balanced: boolean;
+}
+
+export interface ReconciliationReport {
+  id: string;
+  run_at: string;
+  payments_audited: number;
+  unknowns_resolved: number;
+  ledger_balanced: boolean;
+  total_debit_paise: number;
+  total_credit_paise: number;
+  discrepancies: Array<{
+    payment_id: string;
+    type: string;
+    details: string;
+  }>;
+  duration_ms: number;
+}
+
+export async function getPaymentLedger(paymentId: string): Promise<ApiResponse<PaymentLedgerSummary>> {
+  const start = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/v1/ledger/payments/${paymentId}`);
+    const latencyMs = Math.round(performance.now() - start);
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        status: res.status,
+        error: json.error || 'Error',
+        message: json.message || 'Failed to retrieve ledger',
+        latencyMs,
+      };
+    }
+    return {
+      status: res.status,
+      data: json as PaymentLedgerSummary,
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      status: 0,
+      error: 'NetworkError',
+      message: err.message,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  }
+}
+
+export async function runReconciliation(): Promise<ApiResponse<ReconciliationReport>> {
+  const start = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/v1/reconciliation/run`, {
+      method: 'POST',
+    });
+    const latencyMs = Math.round(performance.now() - start);
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        status: res.status,
+        error: json.error || 'Error',
+        message: json.message || 'Reconciliation failed',
+        latencyMs,
+      };
+    }
+    return {
+      status: res.status,
+      data: json as ReconciliationReport,
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      status: 0,
+      error: 'NetworkError',
+      message: err.message,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  }
+}
+
+export async function getLatestReconciliationReport(): Promise<ApiResponse<ReconciliationReport>> {
+  const start = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/v1/reconciliation/reports/latest`);
+    const latencyMs = Math.round(performance.now() - start);
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        status: res.status,
+        error: json.error,
+        message: json.message,
+        latencyMs,
+      };
+    }
+    return {
+      status: res.status,
+      data: json as ReconciliationReport,
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      status: 0,
+      error: 'NetworkError',
+      message: err.message,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  }
+}
+
+

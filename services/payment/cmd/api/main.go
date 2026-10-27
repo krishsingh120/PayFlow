@@ -19,8 +19,11 @@ import (
 
 	"github.com/krishsingh120/payflow/services/payment/internal/config"
 	svchttp "github.com/krishsingh120/payflow/services/payment/internal/http"
+	"github.com/krishsingh120/payflow/services/payment/internal/ledger"
 	"github.com/krishsingh120/payflow/services/payment/internal/messaging"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
+	"github.com/krishsingh120/payflow/services/payment/internal/provider"
+	"github.com/krishsingh120/payflow/services/payment/internal/reconciliation"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
 )
 
@@ -92,11 +95,23 @@ func main() {
 		publisher = messaging.NewMemoryBroker()
 	}
 
+	// ── Ledger & Reconciliation ─────────────────────────────────────────────
+	var ledgerRepo ledger.Repository
+	if pool != nil {
+		ledgerRepo = ledger.NewPostgresRepository(pool)
+	} else {
+		ledgerRepo = ledger.NewMemoryRepository()
+	}
+	ledgerService := ledger.NewService(ledgerRepo, logger)
+
+	simProvider := provider.NewSimulatedProvider(cfg.ProviderDefaultOutcome, cfg.ProviderTimeoutMs)
+	reconciliationEngine := reconciliation.NewEngine(repo, simProvider, ledgerService, publisher, logger)
+
 	// ── Payment Service ─────────────────────────────────────────────────────
-	paymentService := payments.NewService(repo).WithPublisher(publisher)
+	paymentService := payments.NewService(repo).WithPublisher(publisher).WithLedger(ledgerService)
 
 	// ── Router ──────────────────────────────────────────────────────────────
-	router := svchttp.NewRouter(logger, paymentService)
+	router := svchttp.NewRouter(logger, paymentService, ledgerService, reconciliationEngine)
 
 	// ── HTTP Server ─────────────────────────────────────────────────────────
 	srv := &http.Server{

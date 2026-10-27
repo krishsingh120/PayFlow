@@ -13,21 +13,28 @@ import (
 	"github.com/stretchr/testify/require"
 
 	svchttp "github.com/krishsingh120/payflow/services/payment/internal/http"
+	"github.com/krishsingh120/payflow/services/payment/internal/ledger"
 	"github.com/krishsingh120/payflow/services/payment/internal/payments"
+	"github.com/krishsingh120/payflow/services/payment/internal/provider"
+	"github.com/krishsingh120/payflow/services/payment/internal/reconciliation"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
 	"github.com/krishsingh120/payflow/services/payment/internal/webhooks"
 	"time"
 )
 
-func setupTestServer() http.Handler {
+func setupTestServer() (http.Handler, ledger.Service, *reconciliation.Engine, storage.PaymentRepository) {
 	repo := storage.NewMemoryPaymentRepository()
-	svc := payments.NewService(repo)
+	simProvider := provider.NewSimulatedProvider("success", 10)
+	ledgerRepo := ledger.NewMemoryRepository()
+	ledgerSvc := ledger.NewService(ledgerRepo, zerolog.Nop())
+	svc := payments.NewService(repo).WithLedger(ledgerSvc)
+	recEngine := reconciliation.NewEngine(repo, simProvider, ledgerSvc, nil, zerolog.Nop())
 	logger := zerolog.Nop()
-	return svchttp.NewRouter(logger, svc)
+	return svchttp.NewRouter(logger, svc, ledgerSvc, recEngine), ledgerSvc, recEngine, repo
 }
 
 func TestHealthEndpoint(t *testing.T) {
-	handler := setupTestServer()
+	handler, _, _, _ := setupTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -43,7 +50,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestCreatePaymentEndpoint(t *testing.T) {
-	handler := setupTestServer()
+	handler, _, _, _ := setupTestServer()
 
 	t.Run("missing Idempotency-Key header returns 400", func(t *testing.T) {
 		body := bytes.NewBufferString(`{"amount": 5000, "currency": "INR"}`)
@@ -159,7 +166,7 @@ func TestCreatePaymentEndpoint(t *testing.T) {
 }
 
 func TestGetPaymentEndpoint(t *testing.T) {
-	handler := setupTestServer()
+	handler, _, _, _ := setupTestServer()
 
 	// Create payment first
 	body := `{"amount": 42000, "currency": "INR"}`
@@ -198,7 +205,7 @@ func TestGetPaymentEndpoint(t *testing.T) {
 }
 
 func TestListPaymentsEndpoint(t *testing.T) {
-	handler := setupTestServer()
+	handler, _, _, _ := setupTestServer()
 
 	// Seed 3 payments
 	for i := 1; i <= 3; i++ {
@@ -235,9 +242,11 @@ func TestListPaymentsEndpoint(t *testing.T) {
 
 func TestRefundEndpoints(t *testing.T) {
 	repo := storage.NewMemoryPaymentRepository()
-	svc := payments.NewService(repo)
+	ledgerRepo := ledger.NewMemoryRepository()
+	ledgerSvc := ledger.NewService(ledgerRepo, zerolog.Nop())
+	svc := payments.NewService(repo).WithLedger(ledgerSvc)
 	logger := zerolog.Nop()
-	handler := svchttp.NewRouter(logger, svc)
+	handler := svchttp.NewRouter(logger, svc, ledgerSvc, nil)
 
 	// Create and transition a payment to SUCCEEDED
 	p, _, err := svc.CreatePayment(context.Background(), "refund-ep-key", payments.CreatePaymentRequest{
@@ -307,7 +316,7 @@ func TestRefundEndpoints(t *testing.T) {
 }
 
 func TestWebhookTestReceiverEndpoint(t *testing.T) {
-	handler := setupTestServer()
+	handler, _, _, _ := setupTestServer()
 
 	secret := "whsec_test_secret_development_mode"
 	payload := []byte(`{"event":"payment.succeeded","payment_id":"pay_test_wh"}`)
@@ -346,5 +355,84 @@ func TestWebhookTestReceiverEndpoint(t *testing.T) {
 		assert.Equal(t, "Unauthorized", errResp.Error)
 	})
 }
+
+func TestLedgerEndpoints(t *testing.T) {
+	handler, ledgerSvc, _, _ := setupTestServer()
+
+	// Seed ledger entries for a payment
+	paymentID := "pay_test_ledger_ep"
+	require.NoError(t, ledgerSvc.RecordPaymentSucceeded(context.Background(), paymentID, 80000))
+
+	t.Run("GET /v1/ledger/payments/{id} returns balanced summary", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/ledger/payments/"+paymentID, nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var summary ledger.PaymentLedgerSummary
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &summary))
+		assert.Equal(t, paymentID, summary.PaymentID)
+		assert.True(t, summary.IsBalanced)
+		assert.Equal(t, int64(80000), summary.TotalDebit)
+		assert.Equal(t, int64(80000), summary.TotalCredit)
+	})
+
+	t.Run("GET /v1/ledger/accounts returns balances", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/ledger/accounts", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.NotNil(t, resp["balances"])
+	})
+}
+
+func TestReconciliationEndpoints(t *testing.T) {
+	handler, _, _, repo := setupTestServer()
+
+	// Seed an UNKNOWN payment to be reconciled
+	now := time.Now().UTC()
+	unknownPayment := &payments.Payment{
+		ID:             "pay_ep_reconcile_1",
+		IdempotencyKey: "idem_ep_rec_1",
+		Amount:         50000,
+		Currency:       "INR",
+		Status:         payments.StatusUnknown,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	require.NoError(t, repo.Create(context.Background(), unknownPayment))
+
+	t.Run("POST /v1/reconciliation/run executes audit cycle", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/reconciliation/run", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var report reconciliation.Report
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &report))
+		assert.NotEmpty(t, report.ID)
+		assert.Equal(t, 1, report.UnknownsResolved)
+		assert.True(t, report.LedgerBalanced)
+	})
+
+	t.Run("GET /v1/reconciliation/reports/latest retrieves last report", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/reconciliation/reports/latest", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var report reconciliation.Report
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &report))
+		assert.NotEmpty(t, report.ID)
+	})
+}
+
 
 

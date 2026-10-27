@@ -53,10 +53,16 @@ type EventPublisher interface {
 	Publish(ctx context.Context, routingKey string, payload []byte) error
 }
 
+// LedgerRecorder defines the contract for recording accounting journal entries.
+type LedgerRecorder interface {
+	RecordRefundSucceeded(ctx context.Context, paymentID string, amount int64) error
+}
+
 // PaymentService implements the Service interface.
 type PaymentService struct {
 	repo      Repository
 	publisher EventPublisher
+	ledger    LedgerRecorder
 }
 
 // NewService creates a new PaymentService with the given repository.
@@ -67,6 +73,12 @@ func NewService(repo Repository) *PaymentService {
 // WithPublisher attaches an event publisher for asynchronous job dispatching.
 func (s *PaymentService) WithPublisher(p EventPublisher) *PaymentService {
 	s.publisher = p
+	return s
+}
+
+// WithLedger attaches a double-entry ledger recorder for financial tracking.
+func (s *PaymentService) WithLedger(l LedgerRecorder) *PaymentService {
+	s.ledger = l
 	return s
 }
 
@@ -255,7 +267,12 @@ func (s *PaymentService) CreateRefund(ctx context.Context, paymentID string, ide
 		return nil, false, err
 	}
 
-	// 4. Emit payment.refunded event
+	// 4. Record double-entry ledger journal for refund
+	if s.ledger != nil {
+		_ = s.ledger.RecordRefundSucceeded(ctx, refund.PaymentID, refund.Amount)
+	}
+
+	// 5. Emit payment.refunded event
 	if s.publisher != nil {
 		eventPayload, _ := json.Marshal(map[string]any{
 			"refund_id":  refund.ID,
