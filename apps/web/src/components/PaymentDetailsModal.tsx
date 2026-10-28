@@ -312,7 +312,7 @@ export const PaymentDetailsModal: React.FC<PaymentDetailsModalProps> = ({ paymen
         )}
 
         {/* Double-Entry Ledger Section */}
-        {ledgerSummary && ledgerSummary.entries.length > 0 && (
+        {ledgerSummary && (
           <div
             style={{
               marginBottom: 20,
@@ -342,61 +342,69 @@ export const PaymentDetailsModal: React.FC<PaymentDetailsModalProps> = ({ paymen
               </span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
-              {ledgerSummary.entries.map((entry) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    background: 'rgba(2, 6, 23, 0.6)',
-                    borderRadius: 6,
-                    border: '1px solid rgba(255, 255, 255, 0.04)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span
+            {Array.isArray(ledgerSummary.entries) && ledgerSummary.entries.length > 0 ? (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                  {ledgerSummary.entries.map((entry) => (
+                    <div
+                      key={entry.id}
                       style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        padding: '2px 6px',
-                        borderRadius: 3,
-                        background: entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(168, 85, 247, 0.15)',
-                        color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC',
-                        border: `1px solid ${entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(168, 85, 247, 0.3)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: 'rgba(2, 6, 23, 0.6)',
+                        borderRadius: 6,
+                        border: '1px solid rgba(255, 255, 255, 0.04)',
                       }}
                     >
-                      {entry.direction}
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', color: '#F8FAFC' }}>
-                      {entry.account}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <strong style={{ color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC' }}>
-                      {formatINR(entry.amount)}
-                    </strong>
-                  </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            background: entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                            color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC',
+                            border: `1px solid ${entry.direction === 'DEBIT' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(168, 85, 247, 0.3)'}`,
+                          }}
+                        >
+                          {entry.direction}
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-mono)', color: '#F8FAFC' }}>
+                          {entry.account}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <strong style={{ color: entry.direction === 'DEBIT' ? '#38BDF8' : '#C084FC' }}>
+                          {formatINR(entry.amount)}
+                        </strong>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <div
-              style={{
-                marginTop: 10,
-                paddingTop: 8,
-                borderTop: '1px solid var(--border-subtle)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 11,
-                color: 'var(--text-dim)',
-              }}
-            >
-              <span>Total Debits: <strong style={{ color: '#38BDF8' }}>{formatINR(ledgerSummary.total_debit)}</strong></span>
-              <span>Total Credits: <strong style={{ color: '#C084FC' }}>{formatINR(ledgerSummary.total_credit)}</strong></span>
-            </div>
+                <div
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    color: 'var(--text-dim)',
+                  }}
+                >
+                  <span>Total Debits: <strong style={{ color: '#38BDF8' }}>{formatINR(ledgerSummary.total_debit)}</strong></span>
+                  <span>Total Credits: <strong style={{ color: '#C084FC' }}>{formatINR(ledgerSummary.total_credit)}</strong></span>
+                </div>
+              </>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+                No double-entry journal entries recorded yet (entries post upon payment completion or refund).
+              </p>
+            )}
           </div>
         )}
 

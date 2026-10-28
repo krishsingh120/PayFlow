@@ -116,6 +116,9 @@ func (s *LedgerService) GetPaymentLedger(ctx context.Context, paymentID string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve ledger entries: %w", err)
 	}
+	if entries == nil {
+		entries = make([]*Entry, 0)
+	}
 
 	var totalDebit, totalCredit int64
 	for _, e := range entries {
