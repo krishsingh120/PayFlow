@@ -80,8 +80,10 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`[gateway] listening on :${PORT} → proxying to ${PAYMENT_SERVICE_URL}`);
-});
+if (process.env['NODE_ENV'] !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`[gateway] listening on :${PORT} → proxying to ${PAYMENT_SERVICE_URL}`);
+  });
+}
 
 export default app;

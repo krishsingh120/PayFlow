@@ -128,12 +128,12 @@ curl -X POST http://localhost:3000/api/v1/payments \
 |---|---|---|
 | 0 | Repository inspection, architecture, plan | ✅ Done |
 | 1 | Monorepo skeleton, Docker Compose, health endpoints | ✅ Done |
-| 2 | Payment Service, PostgreSQL schema, state machine, tests | ⏳ |
-| 3 | API Gateway, React frontend | ⏳ |
-| 4 | RabbitMQ, Go worker, simulated provider | ⏳ |
-| 5 | Idempotency hardening, refunds, webhooks, Outbox | ⏳ |
-| 6 | Double-entry ledger, reconciliation | ⏳ |
-| 7 | E2E, CI, security review | ⏳ |
+| 2 | Payment Service, PostgreSQL schema, state machine, tests | ✅ Done |
+| 3 | API Gateway, React frontend | ✅ Done |
+| 4 | RabbitMQ, Go worker, simulated provider | ✅ Done |
+| 5 | Idempotency hardening, refunds, webhooks, Outbox | ✅ Done |
+| 6 | Double-entry ledger, automated reconciliation | ✅ Done |
+| 7 | E2E verification, CI workflow, security review | ✅ Done |
 
 ---
 
@@ -149,24 +149,93 @@ curl -X POST http://localhost:3000/api/v1/payments \
 | [Failure Handling](docs/failure-handling.md) | Retries, timeouts, idempotency |
 | [Go Concurrency](docs/go-concurrency.md) | Patterns used in the codebase |
 | [Implementation Log](docs/implementation-log.md) | Phase status and commits |
+| [High-Level Design](docs/payflow-hld.md) | HLD with architecture diagram |
+
+---
+
+## API Reference
+
+See [`docs/api-reference.md`](docs/api-reference.md) for full endpoint documentation.
+
+### All Endpoints
+
+```
+POST   /v1/payments                        Create payment (idempotent)
+GET    /v1/payments/:id                    Get payment status
+GET    /v1/payments                        List payments (paginated, filterable)
+POST   /v1/payments/:id/refunds            Initiate partial/full refund (idempotent)
+GET    /v1/payments/:id/refunds            List refunds for payment
+GET    /v1/ledger/payments/:id             Double-entry journal for payment
+GET    /v1/ledger/accounts                 Account balances (receivable, revenue, etc.)
+GET    /v1/ledger/entries                  All ledger entries
+POST   /v1/reconciliation/run             Trigger automated reconciliation audit
+GET    /v1/reconciliation/reports/latest  Latest reconciliation report
+POST   /v1/webhooks/test-receiver         HMAC-SHA256 webhook test endpoint
+GET    /v1/health                          Service health
+```
+
+### Create a Payment
+
+```bash
+curl -X POST http://localhost:3000/api/v1/payments \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"amount": 100000, "currency": "INR", "description": "Order #42"}'
+```
+
+### Run Reconciliation Audit
+
+```bash
+curl -X POST http://localhost:3000/api/v1/reconciliation/run
+curl http://localhost:3000/api/v1/reconciliation/reports/latest
+```
+
+---
+
+## E2E Verification
+
+Run the complete invariants verification suite locally:
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\verify_e2e.ps1
+
+# Linux / macOS
+bash scripts/verify_e2e.sh
+```
+
+This verifies:
+1. **Idempotency** — exactly-once guarantees, conflict detection
+2. **State machine** — CREATED → PENDING → SUCCEEDED
+3. **Double-entry ledger** — Sum(DEBIT) == Sum(CREDIT) at all times
+4. **Refund engine** — partial/full refunds with over-refund protection
+5. **Webhook security** — HMAC-SHA256 signing, constant-time verify, tamper rejection
+6. **Reconciliation** — UNKNOWN state resolution, ledger self-healing
 
 ---
 
 ## Development Commands
 
 ```bash
-# Go service
+# Go service — test and build
 cd services/payment
-go build ./...
 go test ./...
+go run ./cmd/e2e          # Full invariants verification
+go build ./cmd/api
+go build ./cmd/worker
 
 # Node gateway
 cd services/api-gateway
 npm install && npm run dev
+npm test
 
 # Frontend
 cd apps/web
 npm install && npm run dev
+npm run build
+
+# Database migrations
+bash scripts/migrate.sh up
 
 # Docker compose
 docker compose -f deployments/docker-compose.yml up -d

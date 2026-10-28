@@ -36,8 +36,14 @@ jobs:
       - name: Build Worker binary
         run: go build -o /dev/null ./cmd/worker
 
+      - name: Build E2E verification binary
+        run: go build -o /dev/null ./cmd/e2e
+
       - name: Run tests
         run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Run E2E Invariants Verification
+        run: go run ./cmd/e2e
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
