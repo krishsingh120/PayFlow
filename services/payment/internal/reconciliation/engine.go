@@ -55,7 +55,7 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 	e.log.Info().Str("run_id", runID).Msg("starting reconciliation audit run")
 
 	var (
-		discrepancies    []Discrepancy
+		discrepancies    = make([]Discrepancy, 0)
 		unknownsResolved int
 		auditedCount     int
 	)

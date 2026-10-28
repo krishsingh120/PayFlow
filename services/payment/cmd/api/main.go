@@ -25,6 +25,7 @@ import (
 	"github.com/krishsingh120/payflow/services/payment/internal/provider"
 	"github.com/krishsingh120/payflow/services/payment/internal/reconciliation"
 	"github.com/krishsingh120/payflow/services/payment/internal/storage"
+	"github.com/krishsingh120/payflow/services/payment/internal/worker"
 )
 
 func main() {
@@ -109,6 +110,21 @@ func main() {
 
 	// ── Payment Service ─────────────────────────────────────────────────────
 	paymentService := payments.NewService(repo).WithPublisher(publisher).WithLedger(ledgerService)
+
+	// ── In-Memory Background Worker ─────────────────────────────────────────
+	// In standalone mode (no external RabbitMQ), wire an in-process consumer so
+	// payment jobs automatically transition CREATED -> PENDING -> SUCCEEDED.
+	if memBroker, ok := publisher.(*messaging.MemoryBroker); ok {
+		proc := worker.NewPaymentProcessor(repo, simProvider, logger).
+			WithLedger(ledgerService)
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		if err := memBroker.Consume(workerCtx, messaging.QueuePaymentProcessing, proc.ProcessJob); err != nil {
+			logger.Warn().Err(err).Msg("failed to start in-memory payment worker")
+		} else {
+			logger.Info().Msg("in-memory background payment worker active")
+		}
+	}
 
 	// ── Router ──────────────────────────────────────────────────────────────
 	router := svchttp.NewRouter(logger, paymentService, ledgerService, reconciliationEngine)

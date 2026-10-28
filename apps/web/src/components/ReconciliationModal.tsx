@@ -195,76 +195,81 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
             </div>
 
             {/* Findings List */}
-            <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-                Discrepancies & Actions ({report.discrepancies.length})
-              </span>
-              <div
-                style={{
-                  marginTop: 8,
-                  maxHeight: 180,
-                  overflowY: 'auto',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
-                {report.discrepancies.length === 0 ? (
+            {(() => {
+              const discrepancies = Array.isArray(report.discrepancies) ? report.discrepancies : [];
+              return (
+                <div style={{ marginBottom: 16 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+                    Discrepancies & Actions ({discrepancies.length})
+                  </span>
                   <div
                     style={{
-                      padding: 16,
-                      textAlign: 'center',
-                      background: 'rgba(2, 6, 23, 0.4)',
-                      borderRadius: 'var(--radius-md)',
-                      color: 'var(--emerald-400)',
-                      fontSize: 12,
+                      marginTop: 8,
+                      maxHeight: 180,
+                      overflowY: 'auto',
                       display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      flexDirection: 'column',
                       gap: 6,
                     }}
                   >
-                    <ShieldCheck size={16} /> All accounts, transactions, and settlement journals are 100% synchronized!
-                  </div>
-                ) : (
-                  report.discrepancies.map((disc, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: '8px 12px',
-                        background: 'rgba(2, 6, 23, 0.6)',
-                        borderRadius: 6,
-                        border: '1px solid var(--border-subtle)',
-                        fontSize: 12,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <div>
-                        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                          {disc.payment_id}
-                        </span>
-                        <span style={{ marginLeft: 8, color: '#F8FAFC' }}>{disc.details}</span>
-                      </div>
-                      <span
+                    {discrepancies.length === 0 ? (
+                      <div
                         style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: '2px 6px',
-                          borderRadius: 3,
-                          background: 'rgba(56, 189, 248, 0.15)',
-                          color: '#38BDF8',
-                          border: '1px solid rgba(56, 189, 248, 0.3)',
+                          padding: 16,
+                          textAlign: 'center',
+                          background: 'rgba(2, 6, 23, 0.4)',
+                          borderRadius: 'var(--radius-md)',
+                          color: 'var(--emerald-400)',
+                          fontSize: 12,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
                         }}
                       >
-                        {disc.type}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+                        <ShieldCheck size={16} /> All accounts, transactions, and settlement journals are 100% synchronized!
+                      </div>
+                    ) : (
+                      discrepancies.map((disc, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: '8px 12px',
+                            background: 'rgba(2, 6, 23, 0.6)',
+                            borderRadius: 6,
+                            border: '1px solid var(--border-subtle)',
+                            fontSize: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <div>
+                            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                              {disc.payment_id}
+                            </span>
+                            <span style={{ marginLeft: 8, color: '#F8FAFC' }}>{disc.details}</span>
+                          </div>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: '2px 6px',
+                              borderRadius: 3,
+                              background: 'rgba(56, 189, 248, 0.15)',
+                              color: '#38BDF8',
+                              border: '1px solid rgba(56, 189, 248, 0.3)',
+                            }}
+                          >
+                            {disc.type}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{ fontSize: 11, color: 'var(--text-dim)', textAlign: 'right' }}>
               Execution completed in {report.duration_ms}ms · Report ID: {report.id}
